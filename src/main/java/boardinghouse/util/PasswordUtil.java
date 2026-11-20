@@ -1,0 +1,29 @@
+package boardinghouse.util;
+
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.util.Base64;
+
+public class PasswordUtil {
+    public static String hash(String password) {
+        byte[] salt = new byte[16];
+        new SecureRandom().nextBytes(salt);
+        return Base64.getEncoder().encodeToString(salt) + ":" + digest(salt, password);
+    }
+
+    public static boolean verify(String password, String stored) {
+        String[] parts = stored.split(":");
+        byte[] salt = Base64.getDecoder().decode(parts[0]);
+        return digest(salt, password).equals(parts[1]);
+    }
+
+    private static String digest(byte[] salt, String password) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            md.update(salt);
+            return Base64.getEncoder().encodeToString(md.digest(password.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
