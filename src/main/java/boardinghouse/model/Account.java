@@ -1,13 +1,19 @@
 package boardinghouse.model;
 
 public class Account {
-    private int accountId;
-    private String email;
-    private String phone;
-    private String passwordHash;
-    private String role;
+    private final int accountId;
+    private final String email;
+    private final String phone;
+    private final String passwordHash;
+    private final Role role;
 
+    // Overload 1: role as saved in the database
     public Account(int accountId, String email, String phone, String passwordHash, String role) {
+        this(accountId, email, phone, passwordHash, Role.from(role));
+    }
+
+    // Overload 2: role as an enum
+    public Account(int accountId, String email, String phone, String passwordHash, Role role) {
         this.accountId = accountId;
         this.email = email;
         this.phone = phone;
@@ -19,5 +25,9 @@ public class Account {
     public String getEmail() { return email; }
     public String getPhone() { return phone; }
     public String getPasswordHash() { return passwordHash; }
-    public String getRole() { return role; }
+
+    // the role as text ("OWNER" or "TENANT"), used by the screens
+    public String getRole() { return role.name(); }
+    public Role getRoleType() { return role; }
+    public boolean isOwner() { return role == Role.OWNER; }
 }

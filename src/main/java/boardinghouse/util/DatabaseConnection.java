@@ -4,7 +4,8 @@ import java.nio.file.*;
 import java.sql.*;
 
 public class DatabaseConnection {
-    private static final String URL = "jdbc:sqlite:boardinghouse.db";
+    public static final String DB_FILE = "boardinghouse.db";
+    private static final String URL = "jdbc:sqlite:" + DB_FILE;
     private static DatabaseConnection instance;
     private Connection connection;
 
@@ -25,6 +26,14 @@ public class DatabaseConnection {
         return connection;
     }
 
+    // used by restore, so the database file can be replaced
+    public void close() {
+        try {
+            if (connection != null && !connection.isClosed()) connection.close();
+        } catch (SQLException ignored) { }
+        connection = null;
+    }
+
     public void initialize() {
         try (Statement st = getConnection().createStatement()) {
             String sql = Files.readString(Path.of("sql/schema.sql"));
@@ -39,12 +48,20 @@ public class DatabaseConnection {
 
     // upgrades an older database without deleting any data
     private void migrate(Statement st) throws SQLException {
-        boolean hasProof = false;
-        try (ResultSet rs = st.executeQuery("PRAGMA table_info(payments)")) {
+        addColumnIfMissing(st, "payments", "proof_path", "TEXT");
+        addColumnIfMissing(st, "accounts", "failed_attempts", "INTEGER NOT NULL DEFAULT 0");
+        addColumnIfMissing(st, "accounts", "locked_until", "INTEGER");
+        addColumnIfMissing(st, "tenants", "status", "TEXT NOT NULL DEFAULT 'ACTIVE'");
+        addColumnIfMissing(st, "tenants", "moved_out_on", "TEXT");
+    }
+
+    private void addColumnIfMissing(Statement st, String table, String column, String definition) throws SQLException {
+        boolean found = false;
+        try (ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")")) {
             while (rs.next()) {
-                if ("proof_path".equals(rs.getString("name"))) hasProof = true;
+                if (column.equals(rs.getString("name"))) found = true;
             }
         }
-        if (!hasProof) st.execute("ALTER TABLE payments ADD COLUMN proof_path TEXT");
+        if (!found) st.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
     }
 }

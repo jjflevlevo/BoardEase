@@ -1,28 +1,35 @@
 package boardinghouse.gui;
 
-import boardinghouse.dao.*;
+import boardinghouse.dao.AccountDAO;
+import boardinghouse.dao.RoomDAO;
+import boardinghouse.dao.TenantDAO;
 import boardinghouse.model.Account;
-import boardinghouse.model.Bill;
+import boardinghouse.model.Deposit;
 import boardinghouse.model.Room;
 import boardinghouse.model.Tenant;
 import boardinghouse.service.AuthService;
-import boardinghouse.service.PaymentService;
+import boardinghouse.service.TenancyService;
 import boardinghouse.util.PasswordUtil;
 import boardinghouse.util.Validator;
 import javax.swing.*;
 import java.awt.*;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class TenantsPanel extends Section {
+    private static final String[] FILTERS = {"Current tenants", "Moved out", "All tenants"};
+
     private final TenantDAO tenantDAO = new TenantDAO();
     private final RoomDAO roomDAO = new RoomDAO();
-    private final BillDAO billDAO = new BillDAO();
     private final AccountDAO accountDAO = new AccountDAO();
     private final AuthService auth = new AuthService();
-    private final PaymentService payments = new PaymentService();
+    private final TenancyService tenancy = new TenancyService();
     private final Runnable onChange;
-    private final JTable table = Theme.table("Name", "Room", "Contact", "Email", "Debt (\u20B1)", "Status", "Actions");
+    private final JComboBox<String> filter = new JComboBox<>(FILTERS);
+    private final JTable table = Theme.table("Name", "Room", "Contact", "Email", "Debt (\u20B1)", "Deposit (\u20B1)",
+            "Status", "Actions");
     private List<Tenant> shown = new ArrayList<>();
 
     public TenantsPanel(Runnable onChange) {
@@ -30,19 +37,31 @@ public class TenantsPanel extends Section {
 
         JButton addBtn = Theme.primary("+  Add Tenant");
         addBtn.addActionListener(e -> addTenant());
+        filter.setPreferredSize(new Dimension(170, 40));
+        filter.addActionListener(e -> refresh());
 
-        JPanel toolbar = Ui.toolbar(table, addBtn);
-        Ui.statusPills(table, 5);
-        RowActions.install(table, 6,
+        JPanel toolbar = Ui.toolbar(table, Theme.buttonRow(filter, Export.csvButton(table, "tenants"), addBtn));
+        Ui.statusPills(table, 6);
+        RowActions.install(table, 7,
                 RowActions.icon("eye", Theme.ACCENT, "View profile", row -> viewProfile(shown.get(row))),
-                RowActions.icon("transfer", Theme.ACCENT, "Assign or transfer room",
-                        row -> assignRoom(List.of(shown.get(row)))),
-                RowActions.icon("trash", Theme.DANGER, "Delete tenant", row -> deleteTenants(List.of(shown.get(row)))));
+                RowActions.when(RowActions.icon("edit", Theme.ACCENT, "Edit tenant", row -> editTenant(shown.get(row))),
+                        row -> isActive(row)),
+                RowActions.when(RowActions.icon("transfer", Theme.ACCENT, "Assign or transfer room",
+                        row -> assignRoom(List.of(shown.get(row)))), row -> isActive(row)),
+                RowActions.when(RowActions.text("Restore", Theme.ACCENT, "Make this tenant active again",
+                        row -> restore(shown.get(row))), row -> row < shown.size() && shown.get(row).isMovedOut()),
+                RowActions.icon("trash", Theme.DANGER, "Delete permanently", row -> deleteTenants(List.of(shown.get(row)))));
 
         JButton assignBtn = Theme.secondary("Assign Room");
         assignBtn.addActionListener(e -> assignRoom(selectedTenants()));
         JButton removeBtn = Theme.secondary("Remove from Room");
         removeBtn.addActionListener(e -> removeFromRoom(selectedTenants()));
+        JButton moveOutBtn = Theme.secondary("Move Out");
+        moveOutBtn.addActionListener(e -> {
+            List<Tenant> sel = selectedTenants();
+            if (sel.size() > 1) msg("Select one tenant to move out.");
+            else if (sel.size() == 1) moveOut(sel.get(0));
+        });
         JButton deleteBtn = Theme.secondary("Delete Selected");
         deleteBtn.addActionListener(e -> deleteTenants(selectedTenants()));
 
@@ -50,27 +69,31 @@ public class TenantsPanel extends Section {
         body.setOpaque(false);
         body.add(toolbar, BorderLayout.NORTH);
         body.add(Theme.scroll(table), BorderLayout.CENTER);
-        body.add(Ui.footer(table, assignBtn, removeBtn, deleteBtn), BorderLayout.SOUTH);
+        body.add(Ui.footer(table, assignBtn, removeBtn, moveOutBtn, deleteBtn), BorderLayout.SOUTH);
         add(Ui.card(body), BorderLayout.CENTER);
+    }
+
+    private boolean isActive(int row) {
+        return row < shown.size() && !shown.get(row).isMovedOut();
     }
 
     @Override
     public void refresh() {
-        shown = tenantDAO.findAll();
+        int f = Math.max(0, filter.getSelectedIndex());
+        shown = f == 0 ? tenantDAO.findAll() : f == 1 ? tenantDAO.findMovedOut() : tenantDAO.findEveryone();
+
         List<Object[]> rows = new ArrayList<>();
         for (Tenant t : shown) {
             Account a = accountDAO.findById(t.getAccountId());
             Room r = t.getRoomId() == null ? null : roomDAO.findById(t.getRoomId());
+            Deposit d = tenancy.depositOf(t.getTenantId());
+            String deposit = d == null ? "-" : d.isHeld() ? Theme.money(d.getAmount()) : "Returned";
+            String status = t.isMovedOut() ? "MOVED OUT" : r == null ? "UNASSIGNED" : "ACTIVE";
             rows.add(new Object[]{t.getName(), r == null ? "-" : r.getRoomNo(), a == null ? "-" : a.getPhone(),
-                    a == null ? "-" : a.getEmail(), Theme.money(debtOf(t)), r == null ? "Unassigned" : "Active", ""});
+                    a == null ? "-" : a.getEmail(), Theme.money(tenancy.unpaidBalance(t.getTenantId())), deposit,
+                    status, ""});
         }
         Theme.fill(table, rows);
-    }
-
-    private double debtOf(Tenant t) {
-        double total = 0;
-        for (Bill b : billDAO.findByTenant(t.getTenantId())) total += payments.balanceOf(b);
-        return total;
     }
 
     // all selected tenants (shows a message when nothing is selected)
@@ -150,9 +173,14 @@ public class TenantsPanel extends Section {
     private void viewProfile(Tenant t) {
         Account a = accountDAO.findById(t.getAccountId());
         Room r = t.getRoomId() == null ? null : roomDAO.findById(t.getRoomId());
+        Deposit d = tenancy.depositOf(t.getTenantId());
+        String deposit = d == null ? "None recorded"
+                : d.isHeld() ? Ui.peso(d.getAmount()) + " held (received " + d.getReceivedOn() + ")"
+                : Ui.peso(d.getAmount()) + " returned on " + d.getSettledOn() + " (refund " + Ui.peso(d.getRefunded()) + ")";
 
         JPanel grid = Theme.detailGrid(new String[][]{
                 {"Name", t.getName()},
+                {"Status", t.isMovedOut() ? "Moved out on " + t.getMovedOutOn() : "Active"},
                 {"Email", a == null ? "-" : a.getEmail()},
                 {"Phone", a == null ? "-" : a.getPhone()},
                 {"Password", "Hidden (stored as a salted hash)"},
@@ -161,19 +189,39 @@ public class TenantsPanel extends Section {
                 {"Occupation", t.getOccupation()},
                 {"Emergency no.", t.getEmergencyNo()},
                 {"Room", r == null ? "Unassigned" : r.getRoomNo()},
-                {"Remaining debt", Ui.peso(debtOf(t))}});
-        JLabel note = Theme.muted("<html><body style='width:380px'>Passwords are never stored in readable form, "
-                + "so they cannot be shown. If a tenant forgets theirs, reset it and give them the temporary "
-                + "password. They can change it in My Profile.</body></html>");
+                {"Security deposit", deposit},
+                {"Remaining debt", Ui.peso(tenancy.unpaidBalance(t.getTenantId()))}});
 
         JPanel content = new JPanel(new BorderLayout(0, 14));
+        content.setOpaque(false);
         content.add(grid, BorderLayout.CENTER);
-        content.add(note, BorderLayout.SOUTH);
+        content.add(Theme.muted("Passwords cannot be shown. Use Reset Password to give the tenant a temporary one."),
+                BorderLayout.SOUTH);
 
-        Object[] options = {"Reset Password", "Close"};
+        String[] options = t.isMovedOut()
+                ? new String[]{"Restore", "Reset Password", "Close"}
+                : new String[]{"Edit", "Deposit", "Reset Password", "Move Out", "Close"};
         int choice = JOptionPane.showOptionDialog(this, content, "Tenant Profile: " + t.getName(),
-                JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[1]);
-        if (choice == 0) resetPassword(t, a);
+                JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[options.length - 1]);
+        if (choice < 0) return;
+        switch (options[choice]) {
+            case "Edit" -> editTenant(t);
+            case "Deposit" -> recordDeposit(t);
+            case "Reset Password" -> resetPassword(t, a);
+            case "Move Out" -> moveOut(t);
+            case "Restore" -> restore(t);
+            default -> { }
+        }
+    }
+
+    private void editTenant(Tenant t) {
+        Tenant fresh = tenantDAO.findById(t.getTenantId());
+        Account a = accountDAO.findById(t.getAccountId());
+        if (fresh == null || a == null) {
+            msg("Tenant not found.");
+            return;
+        }
+        if (ProfileDialog.edit(this, fresh, a, true)) refresh();
     }
 
     private void resetPassword(Tenant t, Account a) {
@@ -195,9 +243,114 @@ public class TenantsPanel extends Section {
                 "Password Reset", JOptionPane.INFORMATION_MESSAGE);
     }
 
+    // ---------- Deposit ----------
+    private void recordDeposit(Tenant t) {
+        Tenant fresh = tenantDAO.findById(t.getTenantId());
+        if (fresh == null || fresh.isMovedOut()) { msg("This tenant has moved out."); return; }
+
+        Deposit current = tenancy.depositOf(fresh.getTenantId());
+        Room room = fresh.getRoomId() == null ? null : roomDAO.findById(fresh.getRoomId());
+
+        JTextField amount = Theme.field("Amount in pesos");
+        JTextField date = Theme.field("yyyy-MM-dd");
+        JTextField note = Theme.field("Optional, e.g. Paid in cash");
+        if (current != null && current.isHeld()) {
+            amount.setText(Theme.money(current.getAmount()));
+            date.setText(current.getReceivedOn());
+            if (current.getNote() != null) note.setText(current.getNote());
+        } else {
+            if (room != null) amount.setText(Theme.money(room.getMonthlyRent()));
+            date.setText(LocalDate.now().toString());
+        }
+
+        JLabel info = Theme.muted(current != null && current.isReturned()
+                ? "The previous deposit was already returned. Saving records a new one."
+                : "Usually one month's rent. It pays unpaid bills when the tenant moves out.");
+        JPanel form = Theme.form(info, Theme.labeled("Deposit amount (\u20B1)", amount),
+                Theme.labeled("Date received", date), Theme.labeled("Note", note));
+
+        while (true) {
+            int ok = JOptionPane.showConfirmDialog(this, form, "Security Deposit: " + fresh.getName(),
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (ok != JOptionPane.OK_OPTION) return;
+
+            double value;
+            LocalDate received;
+            try {
+                value = Double.parseDouble(amount.getText().trim().replace(",", ""));
+            } catch (NumberFormatException e) {
+                msg("Enter a valid amount.");
+                continue;
+            }
+            try {
+                received = LocalDate.parse(date.getText().trim());
+            } catch (DateTimeParseException e) {
+                msg("The date must look like 2026-11-21.");
+                continue;
+            }
+
+            String error = tenancy.recordDeposit(fresh, value, received, note.getText().trim());
+            if (error == null) {
+                msg("Deposit saved.");
+                refresh();
+                return;
+            }
+            msg(error);
+        }
+    }
+
+    // ---------- Move out and restore ----------
+    private void moveOut(Tenant t) {
+        Tenant fresh = tenantDAO.findById(t.getTenantId());
+        if (fresh == null) { msg("Tenant not found."); return; }
+        if (fresh.isMovedOut()) { msg("This tenant has already moved out."); return; }
+
+        TenancyService.MoveOutPreview p = tenancy.preview(fresh);
+        Room r = fresh.getRoomId() == null ? null : roomDAO.findById(fresh.getRoomId());
+        JPanel grid = Theme.detailGrid(new String[][]{
+                {"Tenant", fresh.getName()},
+                {"Room", r == null ? "-" : r.getRoomNo()},
+                {"Unpaid balance", Ui.peso(p.unpaid())},
+                {"Deposit held", Ui.peso(p.deposit())},
+                {"Deposit used for unpaid bills", Ui.peso(p.deduction())},
+                {"Refund to give the tenant", Ui.peso(p.refund())},
+                {"Still unpaid after the deposit", Ui.peso(p.remainingDebt())}});
+        JLabel note = Theme.muted("<html><body style='width:380px'>The tenant leaves their room and can no longer "
+                + "log in. Their bills and payment history are kept, and you can restore them later.</body></html>");
+
+        JPanel content = new JPanel(new BorderLayout(0, 14));
+        content.setOpaque(false);
+        content.add(grid, BorderLayout.CENTER);
+        content.add(note, BorderLayout.SOUTH);
+
+        Object[] options = {"Move Out", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(this, content, "Move Out: " + fresh.getName(),
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+        if (choice != 0) return;
+
+        TenancyService.Result result = tenancy.moveOut(fresh);
+        msg(result.message());
+        onChange.run();
+        refresh();
+    }
+
+    private void restore(Tenant t) {
+        if (!Theme.confirm(this, "Make " + t.getName() + " an active tenant again?\nThey will be able to log in.",
+                "Restore Tenant")) return;
+        TenancyService.Result result = tenancy.restore(tenantDAO.findById(t.getTenantId()));
+        msg(result.message());
+        refresh();
+    }
+
     // ---------- Rooms ----------
     private void assignRoom(List<Tenant> sel) {
         if (sel.isEmpty()) return;
+        for (Tenant t : sel) {
+            if (t.isMovedOut()) {
+                msg("Restore moved-out tenants before assigning them a room.");
+                return;
+            }
+        }
         List<Room> rooms = roomDAO.findAll();
         if (rooms.isEmpty()) { msg("Add a room first."); return; }
 
@@ -236,7 +389,7 @@ public class TenantsPanel extends Section {
         List<String> blocked = new ArrayList<>();
         for (Tenant t : sel) {
             if (t.getRoomId() == null) { noRoom++; continue; }
-            double debt = debtOf(t);
+            double debt = tenancy.unpaidBalance(t.getTenantId());
             if (debt > 0) blocked.add(t.getName() + " (owes " + Ui.peso(debt) + ")");
             else if (tenantDAO.assignRoom(t.getTenantId(), null)) done++;
         }
@@ -254,14 +407,15 @@ public class TenantsPanel extends Section {
         double totalDebt = 0;
         StringBuilder names = new StringBuilder();
         for (int i = 0; i < sel.size(); i++) {
-            totalDebt += debtOf(sel.get(i));
+            totalDebt += tenancy.unpaidBalance(sel.get(i).getTenantId());
             if (i < 5) names.append("  - ").append(sel.get(i).getName()).append("\n");
         }
         if (sel.size() > 5) names.append("  ... and ").append(sel.size() - 5).append(" more\n");
 
         String text = "Permanently delete " + (sel.size() == 1 ? "this tenant" : sel.size() + " tenants") + "?\n\n"
-                + names + "\nThis removes their account, bills, and payment records.\n"
-                + "Their approved payments will no longer count in the income report.";
+                + names + "\nThis removes their account, deposit, requests, bills, and payment records.\n"
+                + "Their approved payments will no longer count in the income report.\n"
+                + "For a tenant who is leaving, use Move Out instead to keep their history.";
         if (totalDebt > 0) text += "\n\nUnpaid balance that will be lost: " + Ui.peso(totalDebt);
         if (!Theme.confirmWarn(this, text, "Delete Tenant")) return;
 

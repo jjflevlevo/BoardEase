@@ -6,13 +6,18 @@ import java.sql.*;
 public class SettingsDAO {
     public record GcashInfo(String name, String phone) {}
 
+    public static final int DEFAULT_AUTO_LOGOUT_MINUTES = 10;
+
     private static final String NAME_KEY = "gcash_name";
     private static final String PHONE_KEY = "gcash_phone";
+    private static final String AUTO_LOGOUT_KEY = "auto_logout_minutes";
+    private static final String LAST_BACKUP_KEY = "last_backup";
 
     private Connection conn() throws SQLException {
         return DatabaseConnection.getInstance().getConnection();
     }
 
+    // ---------- GCash ----------
     // returns null when the owner has not given any GCash information
     public GcashInfo getGcash() {
         String name = get(NAME_KEY);
@@ -33,6 +38,27 @@ public class SettingsDAO {
         delete(PHONE_KEY);
     }
 
+    // ---------- Auto logout (0 means off) ----------
+    public int getAutoLogoutMinutes() {
+        String v = get(AUTO_LOGOUT_KEY);
+        if (v == null) return DEFAULT_AUTO_LOGOUT_MINUTES;
+        try {
+            return Integer.parseInt(v);
+        } catch (NumberFormatException e) {
+            return DEFAULT_AUTO_LOGOUT_MINUTES;
+        }
+    }
+
+    public void setAutoLogoutMinutes(int minutes) {
+        set(AUTO_LOGOUT_KEY, String.valueOf(minutes));
+    }
+
+    // ---------- Backups ----------
+    public String getLastBackup() { return get(LAST_BACKUP_KEY); }
+
+    public void setLastBackup(String text) { set(LAST_BACKUP_KEY, text); }
+
+    // ---------- Storage ----------
     private String get(String key) {
         try (PreparedStatement ps = conn().prepareStatement("SELECT setting_value FROM settings WHERE setting_key = ?")) {
             ps.setString(1, key);

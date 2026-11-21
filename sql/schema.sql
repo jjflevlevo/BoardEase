@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   email TEXT NOT NULL UNIQUE,
   phone TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('TENANT','OWNER'))
+  role TEXT NOT NULL CHECK (role IN ('TENANT','OWNER')),
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  locked_until INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS tenants (
@@ -21,7 +23,9 @@ CREATE TABLE IF NOT EXISTS tenants (
   address TEXT,
   age INTEGER,
   occupation TEXT,
-  emergency_no TEXT
+  emergency_no TEXT,
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','MOVED_OUT')),
+  moved_out_on TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meter_readings (
@@ -65,4 +69,36 @@ CREATE TABLE IF NOT EXISTS activity_log (
   type TEXT NOT NULL,
   message TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS announcements (
+  announcement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK (priority IN ('NORMAL','IMPORTANT')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_requests (
+  request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(tenant_id),
+  room_id INTEGER REFERENCES rooms(room_id),
+  category TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','IN_PROGRESS','DONE')),
+  owner_note TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS deposits (
+  deposit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(tenant_id),
+  amount REAL NOT NULL,
+  received_on TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'HELD' CHECK (status IN ('HELD','RETURNED')),
+  deducted REAL NOT NULL DEFAULT 0,
+  refunded REAL NOT NULL DEFAULT 0,
+  settled_on TEXT,
+  note TEXT
 );

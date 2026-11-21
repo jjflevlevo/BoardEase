@@ -22,6 +22,10 @@ public class LoginPanel extends JPanel {
     private final JCheckBox remember = new JCheckBox("Remember Me");
 
     public LoginPanel(MainFrame frame) {
+        this(frame, null);
+    }
+
+    public LoginPanel(MainFrame frame, String notice) {
         this.frame = frame;
         setBackground(Theme.BG);
         setLayout(new GridBagLayout());
@@ -43,6 +47,11 @@ public class LoginPanel extends JPanel {
         shell.add(new BrandPanel(), BorderLayout.WEST);
         shell.add(buildForm(), BorderLayout.CENTER);
         add(shell);
+
+        if (notice != null) {
+            loginError.setForeground(Theme.WARN);
+            loginError.setText(notice);
+        }
 
         email.addActionListener(e -> password.requestFocusInWindow());
         SwingUtilities.invokeLater(() -> (saved.isEmpty() ? email : password).requestFocusInWindow());
@@ -103,6 +112,7 @@ public class LoginPanel extends JPanel {
     private void login() {
         String mail = email.getText().trim();
         String pw = new String(password.getPassword());
+        loginError.setForeground(Theme.DANGER);
         loginError.setText(" ");
 
         boolean ok = true;
@@ -110,9 +120,9 @@ public class LoginPanel extends JPanel {
         ok &= Theme.check(password, passwordError, !pw.isEmpty(), "Enter your password.");
         if (!ok) return;
 
-        Account acc = auth.login(mail, pw);
-        if (acc == null) {
-            loginError.setText("Incorrect email or password. Please try again.");
+        AuthService.LoginResult result = auth.attemptLogin(mail, pw);
+        if (!result.success()) {
+            loginError.setText(result.error());
             password.requestFocusInWindow();
             password.selectAll();
             return;
@@ -121,6 +131,7 @@ public class LoginPanel extends JPanel {
         if (remember.isSelected()) prefs.put(REMEMBER_KEY, mail);
         else prefs.remove(REMEMBER_KEY);
 
+        Account acc = result.account();
         if ("OWNER".equals(acc.getRole())) frame.showOwner(acc);
         else frame.showTenant(acc);
     }

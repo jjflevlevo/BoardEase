@@ -60,7 +60,7 @@ public class RowActions {
         col.setCellRenderer((t, value, selected, focus, row, c) -> {
             Color bg = BASE.getTableCellRendererComponent(t, "", selected, false, row, c).getBackground();
             int modelRow = t.convertRowIndexToModel(row);
-            return new Cell(slots(t, actions, modelRow, t.getRowHeight(row)), bg);
+            return new Cell(slots(t, actions, modelRow, t.getRowHeight(row)), bg, Ui.rowLine(t));
         });
 
         MouseAdapter mouse = new MouseAdapter() {
@@ -117,10 +117,12 @@ public class RowActions {
     private static class Cell extends JComponent {
         private final List<Slot> slots;
         private final Color bg;
+        private final Color line;
 
-        Cell(List<Slot> slots, Color bg) {
+        Cell(List<Slot> slots, Color bg, Color line) {
             this.slots = slots;
             this.bg = bg;
+            this.line = line;
         }
 
         @Override
@@ -130,6 +132,10 @@ public class RowActions {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g2.setColor(bg);
             g2.fillRect(0, 0, getWidth(), getHeight());
+            if (line != null) {
+                g2.setColor(line);
+                g2.fillRect(0, getHeight() - 1, getWidth(), 1); // keeps the line between rows
+            }
 
             g2.setFont(Theme.font(9, Font.BOLD));
             FontMetrics fm = g2.getFontMetrics();

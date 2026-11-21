@@ -75,6 +75,35 @@ public class Icons {
                 hands.lineTo(11.5f, 10.5f);
                 g2.draw(hands);
             }
+            case "maintenance" -> {
+                // wrench
+                g2.draw(new Line2D.Float(3.5f, 14.5f, 9.9f, 8.1f));
+                g2.draw(new Arc2D.Float(9, 2.5f, 6.5f, 6.5f, 80, 290, Arc2D.OPEN));
+            }
+            case "announcements" -> {
+                // megaphone
+                Path2D horn = new Path2D.Float();
+                horn.moveTo(3, 7);
+                horn.lineTo(7, 7);
+                horn.lineTo(14, 3);
+                horn.lineTo(14, 15);
+                horn.lineTo(7, 11);
+                horn.lineTo(3, 11);
+                horn.closePath();
+                g2.draw(horn);
+                g2.draw(new Line2D.Float(5.5f, 11, 6.5f, 15.5f));
+            }
+            case "settings" -> {
+                g2.draw(new Line2D.Float(2, 4.5f, 4, 4.5f));
+                g2.draw(new Line2D.Float(8, 4.5f, 16, 4.5f));
+                g2.draw(new Ellipse2D.Float(4, 2.5f, 4, 4));
+                g2.draw(new Line2D.Float(2, 9, 10, 9));
+                g2.draw(new Line2D.Float(14, 9, 16, 9));
+                g2.draw(new Ellipse2D.Float(10, 7, 4, 4));
+                g2.draw(new Line2D.Float(2, 13.5f, 6, 13.5f));
+                g2.draw(new Line2D.Float(10, 13.5f, 16, 13.5f));
+                g2.draw(new Ellipse2D.Float(6, 11.5f, 4, 4));
+            }
             case "bell" -> {
                 Path2D bell = new Path2D.Float();
                 bell.moveTo(4, 13);

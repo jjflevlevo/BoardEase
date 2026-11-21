@@ -11,7 +11,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
-// shared pieces of the design: cards, tabs, the table toolbar and footer, status pills, the bell
+// shared pieces of the design: cards, tabs, text areas, the table toolbar and footer, status pills, the bell
 public class Ui {
     private Ui() { }
 
@@ -31,6 +31,13 @@ public class Ui {
         } catch (Exception e) {
             return utc;
         }
+    }
+
+    // one line of text, cut to a maximum length
+    public static String preview(String s, int max) {
+        if (s == null) return "-";
+        String one = s.replaceAll("\\s+", " ").trim();
+        return one.length() > max ? one.substring(0, max - 3) + "..." : one;
     }
 
     // ---------- Cards ----------
@@ -68,6 +75,40 @@ public class Ui {
         return t;
     }
 
+    // ---------- Multi-line text ----------
+    public static JTextArea textArea(String placeholder, int rows) {
+        JTextArea a = new JTextArea(rows, 30);
+        a.setLineWrap(true);
+        a.setWrapStyleWord(true);
+        a.setFont(Theme.font(11, Font.PLAIN));
+        a.setBackground(Theme.SIDEBAR);
+        a.setMargin(new Insets(8, 10, 8, 10));
+        a.putClientProperty("JTextField.placeholderText", placeholder);
+        Theme.addContextMenu(a);
+        return a;
+    }
+
+    public static JScrollPane areaScroll(JTextArea area) {
+        JScrollPane s = new JScrollPane(area, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        s.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
+        return s;
+    }
+
+    // a label with any component under it, at a fixed height
+    public static JPanel labeledBlock(String label, JComponent content, int height) {
+        JPanel p = new JPanel();
+        p.setOpaque(false);
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        JLabel l = Theme.muted(label);
+        l.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Theme.block(content, height);
+        p.add(l);
+        p.add(Box.createVerticalStrut(4));
+        p.add(content);
+        return Theme.block(p, height + 24);
+    }
+
     // ---------- Table toolbar and footer ----------
     // search box on the left, an optional component (like an Add button) on the right
     // (this also turns on click-to-sort headers, so call it before RowActions.install)
@@ -81,13 +122,13 @@ public class Ui {
         return search;
     }
 
-    // "Showing 3 of 8" that follows the search box
+    // "Showing 3 of 8" that follows the search box (the sorting tip is on the column headers)
     public static JLabel countLabel(JTable table) {
         JLabel label = Theme.muted(" ");
-        Runnable update = () -> label.setText("Showing " + table.getRowCount() + " of " + table.getModel().getRowCount()
-                + "     |     Click a column header to sort. Ctrl or Shift + click selects several rows.");
+        Runnable update = () -> label.setText("Showing " + table.getRowCount() + " of " + table.getModel().getRowCount());
         table.getModel().addTableModelListener(e -> SwingUtilities.invokeLater(update));
         if (table.getRowSorter() != null) table.getRowSorter().addRowSorterListener(e -> update.run());
+        table.getTableHeader().setToolTipText("Click a column header to sort. Ctrl or Shift + click selects several rows.");
         update.run();
         return label;
     }
@@ -104,13 +145,26 @@ public class Ui {
         return p;
     }
 
+    // the color of the line between table rows (null when the table has no row lines)
+    public static Color rowLine(JTable table) {
+        return table.getShowHorizontalLines() ? table.getGridColor() : null;
+    }
+
     // ---------- Status pills in tables ----------
     public static Color statusColor(String text) {
         String s = text == null ? "" : text.toUpperCase();
-        if (s.contains("OVERDUE") || s.equals("REJECTED") || s.equals("INACTIVE")) return Theme.DANGER;
-        if (s.equals("PAID") || s.equals("APPROVED") || s.equals("OCCUPIED") || s.equals("ACTIVE")) return Theme.SUCCESS;
+        if (s.contains("OVERDUE") || s.equals("REJECTED") || s.equals("INACTIVE") || s.equals("IMPORTANT")) {
+            return Theme.DANGER;
+        }
+        if (s.equals("PAID") || s.equals("APPROVED") || s.equals("OCCUPIED") || s.equals("ACTIVE")
+                || s.equals("DONE") || s.equals("RETURNED")) {
+            return Theme.SUCCESS;
+        }
         if (s.equals("PARTIAL") || s.equals("PENDING") || s.equals("VACANT") || s.equals("UNPAID")
-                || s.equals("UNASSIGNED")) return Theme.WARN;
+                || s.equals("UNASSIGNED") || s.equals("OPEN")) {
+            return Theme.WARN;
+        }
+        if (s.equals("IN PROGRESS") || s.equals("HELD")) return Theme.ACCENT;
         return Theme.MUTED;
     }
 
@@ -121,7 +175,7 @@ public class Ui {
             public Component getTableCellRendererComponent(JTable t, Object value, boolean selected,
                                                            boolean focus, int row, int col) {
                 Color bg = BASE.getTableCellRendererComponent(t, "", selected, false, row, col).getBackground();
-                return new PillCell(value == null ? "" : value.toString(), bg);
+                return new PillCell(value == null ? "" : value.toString(), bg, rowLine(t));
             }
         });
     }
@@ -129,10 +183,12 @@ public class Ui {
     private static class PillCell extends JComponent {
         private final String text;
         private final Color bg;
+        private final Color line;
 
-        PillCell(String text, Color bg) {
+        PillCell(String text, Color bg, Color line) {
             this.text = text;
             this.bg = bg;
+            this.line = line;
         }
 
         @Override
@@ -142,6 +198,10 @@ public class Ui {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g2.setColor(bg);
             g2.fillRect(0, 0, getWidth(), getHeight());
+            if (line != null) {
+                g2.setColor(line);
+                g2.fillRect(0, getHeight() - 1, getWidth(), 1); // keeps the line between rows
+            }
             if (!text.isEmpty()) {
                 Color c = statusColor(text);
                 g2.setFont(Theme.font(8.5f, Font.BOLD));

@@ -64,10 +64,16 @@ public class RoomDAO {
         }
     }
 
-    // a room with tenants cannot be deleted; its meter readings are deleted with it
+    // a room with tenants cannot be deleted; its meter readings go with it,
+    // and old maintenance requests keep their history without the room
     public boolean delete(int id) {
         try {
             if (countTenants(id) > 0) return false;
+            try (PreparedStatement ps = conn().prepareStatement(
+                    "UPDATE maintenance_requests SET room_id = NULL WHERE room_id = ?")) {
+                ps.setInt(1, id);
+                ps.executeUpdate();
+            }
             try (PreparedStatement ps = conn().prepareStatement("DELETE FROM meter_readings WHERE room_id = ?")) {
                 ps.setInt(1, id);
                 ps.executeUpdate();

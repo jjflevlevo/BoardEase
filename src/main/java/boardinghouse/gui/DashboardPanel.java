@@ -2,6 +2,7 @@ package boardinghouse.gui;
 
 import boardinghouse.dao.*;
 import boardinghouse.model.*;
+import boardinghouse.service.DemoDataService;
 import boardinghouse.service.PaymentService;
 import javax.swing.*;
 import java.awt.*;
@@ -11,7 +12,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,12 +29,14 @@ public class DashboardPanel extends Section {
     private final PaymentDAO paymentDAO = new PaymentDAO();
     private final ActivityDAO activityDAO = new ActivityDAO();
     private final PaymentService payments = new PaymentService();
+    private final DemoDataService demo = new DemoDataService();
 
     private final StatCard tenantsCard = new StatCard("Total Tenants", "tenants", Theme.ACCENT);
     private final StatCard roomsCard = new StatCard("Occupied Rooms", "rooms", Theme.SUCCESS);
     private final StatCard pendingCard = new StatCard("Pending Payments", "payments", Theme.WARN);
     private final StatCard unpaidCard = new StatCard("Total Unpaid", "billing", Theme.DANGER);
 
+    private final RoundedPanel banner = new RoundedPanel(new Color(0x16294A), Theme.ACCENT, 12, 16);
     private final BarChart chart = new BarChart();
     private final JComboBox<String> yearBox = new JComboBox<>();
     private final JPanel activityList = new JPanel();
@@ -41,13 +44,30 @@ public class DashboardPanel extends Section {
     private boolean loading;
 
     public DashboardPanel() {
+        // shown only while the system is empty
+        banner.setLayout(new BorderLayout(16, 0));
+        JLabel bannerText = new JLabel("<html><b>Your boarding house is still empty.</b><br>"
+                + "Add rooms and tenants, or load sample data to try every feature.</html>");
+        JButton load = Theme.primary("Load Demo Data");
+        load.addActionListener(e -> loadDemo());
+        JPanel loadWrap = new JPanel(new GridBagLayout());
+        loadWrap.setOpaque(false);
+        loadWrap.add(load);
+        banner.add(bannerText, BorderLayout.CENTER);
+        banner.add(loadWrap, BorderLayout.EAST);
+
         JPanel cards = new JPanel(new GridLayout(1, 4, 16, 0));
         cards.setOpaque(false);
         cards.add(tenantsCard);
         cards.add(roomsCard);
         cards.add(pendingCard);
         cards.add(unpaidCard);
-        add(cards, BorderLayout.NORTH);
+
+        JPanel north = new JPanel(new BorderLayout(0, 16));
+        north.setOpaque(false);
+        north.add(banner, BorderLayout.NORTH);
+        north.add(cards, BorderLayout.CENTER);
+        add(north, BorderLayout.NORTH);
 
         // Monthly Income card
         yearBox.addActionListener(e -> {
@@ -99,6 +119,8 @@ public class DashboardPanel extends Section {
         double unpaid = 0;
         for (Bill b : billDAO.findAll()) unpaid += payments.balanceOf(b);
 
+        banner.setVisible(rooms.isEmpty() && tenants.isEmpty());
+
         tenantsCard.setValue(String.valueOf(tenants.size()));
         tenantsCard.setNote("Registered tenants", Theme.MUTED);
 
@@ -115,11 +137,27 @@ public class DashboardPanel extends Section {
         loadYears();
         drawChart();
         loadActivity();
+        revalidate();
+        repaint();
+    }
+
+    private void loadDemo() {
+        if (!Theme.confirm(this, "Load sample rooms, tenants, meter readings, bills, and payments?\n"
+                + "Use this for demos and testing.", "Load Demo Data")) return;
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        String result;
+        try {
+            result = demo.load();
+        } finally {
+            setCursor(Cursor.getDefaultCursor());
+        }
+        msg(result);
+        refresh();
     }
 
     // ---------- Chart ----------
     private void loadYears() {
-        TreeSet<String> years = new TreeSet<>(java.util.Comparator.reverseOrder());
+        TreeSet<String> years = new TreeSet<>(Comparator.reverseOrder());
         years.add(String.valueOf(Year.now().getValue()));
         for (String key : income.keySet()) {
             if (key != null && key.length() >= 4) years.add(key.substring(0, 4));
@@ -206,8 +244,4 @@ public class DashboardPanel extends Section {
             return utc;
         }
     }
-
-    // keeps an unused-list import from being needed
-    @SuppressWarnings("unused")
-    private static List<String> none() { return new ArrayList<>(); }
 }

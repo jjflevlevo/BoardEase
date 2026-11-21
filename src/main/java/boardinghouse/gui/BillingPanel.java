@@ -150,7 +150,7 @@ public class BillingPanel extends Section {
     private JPanel billsView() {
         JPanel content = new JPanel(new BorderLayout(0, 12));
         content.setOpaque(false);
-        content.add(Ui.toolbar(billsTable, null), BorderLayout.NORTH);
+        content.add(Ui.toolbar(billsTable, Export.csvButton(billsTable, "bills")), BorderLayout.NORTH);
         content.add(Theme.scroll(billsTable), BorderLayout.CENTER);
         content.add(Ui.footer(billsTable), BorderLayout.SOUTH);
         Ui.statusPills(billsTable, 6);

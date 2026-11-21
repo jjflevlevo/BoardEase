@@ -27,39 +27,47 @@ public class TenantDAO {
         }
     }
 
-    public Tenant findByAccountId(int accountId) {
-        String sql = "SELECT * FROM tenants WHERE account_id = ?";
-        try (PreparedStatement ps = conn().prepareStatement(sql)) {
-            ps.setInt(1, accountId);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) return map(rs);
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-        return null;
+    public Tenant findById(int tenantId) {
+        List<Tenant> list = query("SELECT * FROM tenants WHERE tenant_id = ?", tenantId);
+        return list.isEmpty() ? null : list.get(0);
     }
 
+    public Tenant findByAccountId(int accountId) {
+        List<Tenant> list = query("SELECT * FROM tenants WHERE account_id = ?", accountId);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    // current tenants only (people who have moved out are not included)
     public List<Tenant> findAll() {
-        List<Tenant> list = new ArrayList<>();
-        try (Statement st = conn().createStatement();
-             ResultSet rs = st.executeQuery("SELECT * FROM tenants ORDER BY name")) {
-            while (rs.next()) list.add(map(rs));
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-        return list;
+        return query("SELECT * FROM tenants WHERE status = 'ACTIVE' ORDER BY name", null);
+    }
+
+    public List<Tenant> findMovedOut() {
+        return query("SELECT * FROM tenants WHERE status = 'MOVED_OUT' ORDER BY moved_out_on DESC, name", null);
+    }
+
+    // current and former tenants
+    public List<Tenant> findEveryone() {
+        return query("SELECT * FROM tenants ORDER BY status, name", null);
     }
 
     public List<Tenant> findByRoom(int roomId) {
-        List<Tenant> list = new ArrayList<>();
-        try (PreparedStatement ps = conn().prepareStatement("SELECT * FROM tenants WHERE room_id = ? ORDER BY name")) {
-            ps.setInt(1, roomId);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) list.add(map(rs));
+        return query("SELECT * FROM tenants WHERE room_id = ? AND status = 'ACTIVE' ORDER BY name", roomId);
+    }
+
+    public boolean updateInfo(int tenantId, String name, String address, int age, String occupation, String emergencyNo) {
+        String sql = "UPDATE tenants SET name = ?, address = ?, age = ?, occupation = ?, emergency_no = ? WHERE tenant_id = ?";
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
+            ps.setString(1, name);
+            ps.setString(2, address);
+            ps.setInt(3, age);
+            ps.setString(4, occupation);
+            ps.setString(5, emergencyNo);
+            ps.setInt(6, tenantId);
+            return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
-        return list;
     }
 
     public boolean assignRoom(int tenantId, Integer roomId) {
@@ -74,7 +82,7 @@ public class TenantDAO {
     }
 
     public int countInRoom(int roomId) {
-        String sql = "SELECT COUNT(*) FROM tenants WHERE room_id = ?";
+        String sql = "SELECT COUNT(*) FROM tenants WHERE room_id = ? AND status = 'ACTIVE'";
         try (PreparedStatement ps = conn().prepareStatement(sql)) {
             ps.setInt(1, roomId);
             ResultSet rs = ps.executeQuery();
@@ -84,7 +92,29 @@ public class TenantDAO {
         }
     }
 
-    // Removes the tenant, their login account, bills, and payments (all or nothing)
+    // ---------- Moving out ----------
+    public boolean moveOut(int tenantId, String date) {
+        String sql = "UPDATE tenants SET status = 'MOVED_OUT', moved_out_on = ?, room_id = NULL WHERE tenant_id = ?";
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
+            ps.setString(1, date);
+            ps.setInt(2, tenantId);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public boolean restore(int tenantId) {
+        String sql = "UPDATE tenants SET status = 'ACTIVE', moved_out_on = NULL WHERE tenant_id = ?";
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
+            ps.setInt(1, tenantId);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // Removes the tenant and everything connected to them (all or nothing)
     public boolean deleteCompletely(Tenant t) {
         List<String> proofs = new ArrayList<>();
         Connection c = null;
@@ -99,19 +129,21 @@ public class TenantDAO {
             }
 
             c.setAutoCommit(false);
-            try (PreparedStatement p1 = c.prepareStatement(
-                         "DELETE FROM payments WHERE bill_id IN (SELECT bill_id FROM bills WHERE tenant_id = ?)");
-                 PreparedStatement p2 = c.prepareStatement("DELETE FROM bills WHERE tenant_id = ?");
-                 PreparedStatement p3 = c.prepareStatement("DELETE FROM tenants WHERE tenant_id = ?");
-                 PreparedStatement p4 = c.prepareStatement("DELETE FROM accounts WHERE account_id = ?")) {
-                p1.setInt(1, t.getTenantId());
-                p1.executeUpdate();
-                p2.setInt(1, t.getTenantId());
-                p2.executeUpdate();
-                p3.setInt(1, t.getTenantId());
-                p3.executeUpdate();
-                p4.setInt(1, t.getAccountId());
-                p4.executeUpdate();
+            String[] steps = {
+                    "DELETE FROM deposits WHERE tenant_id = ?",
+                    "DELETE FROM maintenance_requests WHERE tenant_id = ?",
+                    "DELETE FROM payments WHERE bill_id IN (SELECT bill_id FROM bills WHERE tenant_id = ?)",
+                    "DELETE FROM bills WHERE tenant_id = ?",
+                    "DELETE FROM tenants WHERE tenant_id = ?"};
+            for (String sql : steps) {
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    ps.setInt(1, t.getTenantId());
+                    ps.executeUpdate();
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM accounts WHERE account_id = ?")) {
+                ps.setInt(1, t.getAccountId());
+                ps.executeUpdate();
             }
             c.commit();
         } catch (SQLException e) {
@@ -127,6 +159,18 @@ public class TenantDAO {
         return true;
     }
 
+    private List<Tenant> query(String sql, Integer param) {
+        List<Tenant> list = new ArrayList<>();
+        try (PreparedStatement ps = conn().prepareStatement(sql)) {
+            if (param != null) ps.setInt(1, param);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) list.add(map(rs));
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return list;
+    }
+
     private Tenant map(ResultSet rs) throws SQLException {
         Tenant t = new Tenant(rs.getString("name"), rs.getString("address"), rs.getInt("age"),
                 rs.getString("occupation"), rs.getString("emergency_no"));
@@ -134,6 +178,8 @@ public class TenantDAO {
         t.setAccountId(rs.getInt("account_id"));
         int room = rs.getInt("room_id");
         t.setRoomId(rs.wasNull() ? null : room);
+        t.setStatus(rs.getString("status"));
+        t.setMovedOutOn(rs.getString("moved_out_on"));
         return t;
     }
 }

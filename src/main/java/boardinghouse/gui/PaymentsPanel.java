@@ -65,7 +65,7 @@ public class PaymentsPanel extends Section {
         List<Payment> shown = new ArrayList<>();
 
         Tab(String status) {
-            JPanel toolbar = Ui.toolbar(table, null);
+            JPanel toolbar = Ui.toolbar(table, Export.csvButton(table, "payments_" + status.toLowerCase()));
             Ui.statusPills(table, 7);
 
             List<RowActions.RowAction> actions = new ArrayList<>();
@@ -74,6 +74,10 @@ public class PaymentsPanel extends Section {
                         row -> review(List.of(shown.get(row)), true)));
                 actions.add(RowActions.text("Reject", Theme.DANGER, "Reject this payment",
                         row -> review(List.of(shown.get(row)), false)));
+            }
+            if (status.equals("APPROVED")) {
+                actions.add(RowActions.icon("billing", Theme.SUCCESS, "View receipt",
+                        row -> ReceiptDialog.show(PaymentsPanel.this, shown.get(row))));
             }
             actions.add(RowActions.when(
                     RowActions.icon("eye", Theme.ACCENT, "View proof of payment", row -> viewProof(shown.get(row))),
@@ -138,15 +142,24 @@ public class PaymentsPanel extends Section {
             else failed.add("#" + p.getPaymentId() + ": " + result);
         }
 
+        refresh();
+        onChange.run();
+
         if (sel.size() == 1) {
-            msg(lastResult);
+            if (approve && lastResult.startsWith("Payment approved")) {
+                int choice = JOptionPane.showConfirmDialog(this, lastResult + "\n\nOpen the receipt now?",
+                        "Payment Approved", JOptionPane.YES_NO_OPTION, JOptionPane.INFORMATION_MESSAGE);
+                if (choice == JOptionPane.YES_OPTION) {
+                    ReceiptDialog.show(this, paymentDAO.findById(sel.get(0).getPaymentId()));
+                }
+            } else {
+                msg(lastResult);
+            }
         } else {
             String summary = done + " payment(s) " + (approve ? "approved" : "rejected") + ".";
             if (!failed.isEmpty()) summary += "\nCould not process:\n" + String.join("\n", failed);
             msg(summary);
         }
-        refresh();
-        onChange.run();
     }
 
     // ---------- Proof image ----------
